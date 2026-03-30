@@ -1,0 +1,33 @@
+┌─────────────────────────────────────────────────────────────────┐
+│                      SECURITY LAYERS                            │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  LAYER 1: IFRAME SANDBOX                                        │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │  sandbox="allow-same-origin allow-scripts"              │   │
+│  │  • Isolates cloned scripts from parent                  │   │
+│  │  • Prevents XSS attacks                                 │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                                                                 │
+│  LAYER 2: SCRIPT STRIPPING                                      │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │  $('script').remove()  // In clone API                  │   │
+│  │  • Removes all JavaScript from cloned content           │   │
+│  │  • Prevents malicious code execution                    │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                                                                 │
+│  LAYER 3: URL VALIDATION                                        │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │  new URL(url)  // Validates URL format                  │   │
+│  │  • Prevents SSRF attacks                                │   │
+│  │  • Ensures proper protocol                              │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                                                                 │
+│  LAYER 4: AUTHENTICATION                                        │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │  NextAuth.js with GitHub OAuth                          │   │
+│  │  • Secure session management                            │   │
+│  │  • Protected API routes                                 │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘

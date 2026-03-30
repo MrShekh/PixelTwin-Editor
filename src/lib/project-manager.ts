@@ -1,3 +1,5 @@
+import { get, set } from 'idb-keyval';
+
 export interface Project {
     id: string;
     name: string;
@@ -11,37 +13,48 @@ export interface Project {
 
 const STORAGE_KEY = 'pixeltwin_projects';
 
-export const saveProject = (project: Project): void => {
-    if (typeof window === 'undefined') return;
-    const projects = getAllProjects();
-    const index = projects.findIndex(p => p.id === project.id);
-    if (index >= 0) {
-        projects[index] = project;
-    } else {
-        projects.push(project);
+export const getAllProjects = async (): Promise<Project[]> => {
+    if (typeof window === 'undefined') return [];
+    try {
+        const projects = await get<Project[]>(STORAGE_KEY);
+        return projects || [];
+    } catch (error) {
+        console.error('Failed to get projects:', error);
+        return [];
     }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
 };
 
-export const getProject = (id: string): Project | null => {
+export const saveProject = async (project: Project): Promise<void> => {
+    if (typeof window === 'undefined') return;
+    try {
+        const projects = await getAllProjects();
+        const index = projects.findIndex(p => p.id === project.id);
+        if (index >= 0) {
+            projects[index] = project;
+        } else {
+            projects.push(project);
+        }
+        await set(STORAGE_KEY, projects);
+    } catch (error) {
+        console.error('Failed to save project:', error);
+        throw error;
+    }
+};
+
+export const getProject = async (id: string): Promise<Project | null> => {
     if (typeof window === 'undefined') return null;
-    const projects = getAllProjects();
+    const projects = await getAllProjects();
     return projects.find(p => p.id === id) || null;
 };
 
-export const getAllProjects = (): Project[] => {
-    if (typeof window === 'undefined') return [];
-    const data = localStorage.getItem(STORAGE_KEY);
-    return data ? JSON.parse(data) : [];
-};
-
-export const deleteProject = (id: string): void => {
+export const deleteProject = async (id: string): Promise<void> => {
     if (typeof window === 'undefined') return;
-    const projects = getAllProjects().filter(p => p.id !== id);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
+    const projects = await getAllProjects();
+    const newProjects = projects.filter(p => p.id !== id);
+    await set(STORAGE_KEY, newProjects);
 };
 
-export const createProject = (data: Partial<Project>): Project => {
+export const createProject = async (data: Partial<Project>): Promise<Project> => {
     const newProject: Project = {
         id: crypto.randomUUID(),
         name: data.name || 'Untitled Project',
@@ -52,6 +65,6 @@ export const createProject = (data: Partial<Project>): Project => {
         createdAt: Date.now(),
         updatedAt: Date.now(),
     };
-    saveProject(newProject);
+    await saveProject(newProject);
     return newProject;
 };

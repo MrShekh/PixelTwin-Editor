@@ -1,0 +1,42 @@
+﻿
+E:\Kaam\Antigravity\pixeltwin\src\app\api\ai\route.ts
+  124:21  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+E:\Kaam\Antigravity\pixeltwin\src\app\api\auth\[...nextauth]\route.ts
+  24:43  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+E:\Kaam\Antigravity\pixeltwin\src\app\api\clone\route.ts
+   15:18  warning  'e' is defined but never used             @typescript-eslint/no-unused-vars
+   56:25  error    Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  106:22  warning  'e' is defined but never used             @typescript-eslint/no-unused-vars
+  197:25  error    Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  252:21  error    Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+E:\Kaam\Antigravity\pixeltwin\src\app\api\deploy\netlify\route.ts
+  125:21  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+E:\Kaam\Antigravity\pixeltwin\src\app\api\deploy\vercel\route.ts
+  116:21  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+E:\Kaam\Antigravity\pixeltwin\src\app\api\github\push\route.ts
+  31:21  error    Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  53:18  warning  'e' is defined but never used             @typescript-eslint/no-unused-vars
+  53:21  error    Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  69:21  error    Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+E:\Kaam\Antigravity\pixeltwin\src\app\editor\[id]\page.tsx
+  191:14  warning  'e' is defined but never used  @typescript-eslint/no-unused-vars
+  221:14  warning  'e' is defined but never used  @typescript-eslint/no-unused-vars
+  246:14  warning  'e' is defined but never used  @typescript-eslint/no-unused-vars
+
+E:\Kaam\Antigravity\pixeltwin\src\components\ui\input.tsx
+  5:18  error  An interface declaring no members is equivalent to its supertype  @typescript-eslint/no-empty-object-type
+
+E:\Kaam\Antigravity\pixeltwin\src\lib\project-manager.ts
+  9:13  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+E:\Kaam\Antigravity\pixeltwin\src\types\next-auth.d.ts
+  1:8  warning  'NextAuth' is defined but never used  @typescript-eslint/no-unused-vars
+
+Γ£û 19 problems (12 errors, 7 warnings)
+

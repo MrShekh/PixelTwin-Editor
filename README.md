@@ -1,13 +1,64 @@
-# PixelTwin Studio - Website Cloner + AI Editor
+# PixelTwin Studio 🎨
 
-PixelTwin Studio allows you to clone any website's frontend, edit it visually or with AI, and export/deploy the result.
+Clone any website and edit it with AI-powered precision.
 
 ## Features
-- **Website Cloning**: Input a URL to fetch and recreate the frontend.
-- **Visual Editor**: Click to edit text, swap images, and modify layout.
-- **AI Magic Edit**: Use AI prompts to rewrite content or change styles (requires API key).
-- **Export**: Download the project as a Zip file.
-- **Project Management**: Local storage based project saving.
+
+- 🌐 **Website Cloning**: Clone any website by URL or upload HTML files
+- ✏️ **Visual Editing**: Click to select and edit any element
+- 🤖 **AI-Powered Editing**: Use AI to modify specific elements or entire pages
+- 📸 **Image Replacement**: Click images to replace them instantly
+- 🎯 **Element-Specific AI**: Select any element and apply AI changes to just that part
+- 🔗 **GitHub Integration**: Push your edited projects directly to GitHub
+- 📦 **Export Options**: Download as ZIP or push to version control
+- 💾 **Project Management**: Save and manage multiple projects locally
+
+## New: GitHub Integration 🚀
+
+You can now connect your GitHub account and push your edited projects directly to GitHub repositories!
+
+### How to Use:
+1. Click "Connect GitHub" in the editor sidebar
+2. Authorize PixelTwin with your GitHub account
+3. Enter a repository name
+4. Click "Push to GitHub" - the app will:
+   - Create the repository if it doesn't exist
+   - Push your edited HTML as `index.html`
+   - Open the repository in a new tab
+
+See [GITHUB_SETUP.md](./GITHUB_SETUP.md) for detailed setup instructions.
+
+## Quick Start
+
+### 1. Clone the repository
+```bash
+git clone https://github.com/yourusername/pixeltwin.git
+cd pixeltwin
+```
+
+### 2. Install dependencies
+```bash
+npm install
+```
+
+### 3. Set up environment variables
+Copy `env.example` to `.env` and fill in your credentials:
+```bash
+cp env.example .env
+```
+
+Required environment variables:
+- `GROQ_API_KEY`: Get from [Groq Console](https://console.groq.com)
+- `GITHUB_ID` & `GITHUB_SECRET`: See [GITHUB_SETUP.md](./GITHUB_SETUP.md)
+- `NEXTAUTH_URL`: Your app URL (http://localhost:3000 for development)
+- `NEXTAUTH_SECRET`: Generate with `openssl rand -base64 32`
+
+### 4. Run the development server
+```bash
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ## Tech Stack
 - **Framework**: Next.js 15 (App Router)
