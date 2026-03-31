@@ -1,14 +1,16 @@
 "use client"
 import { useEffect, useState, useRef } from 'react'
 import { useParams } from 'next/navigation'
+import { useSession, signIn, signOut } from 'next-auth/react'
 import { getProject, Project, saveProject } from '@/lib/project-manager'
 import { Button } from '@/components/ui/button'
-import { Loader2, Save, Undo, Redo, Wand2, Image as ImageIcon, Type, Download, Rocket, Github, MousePointerClick, FormInput, Square, Sparkles, Bold, AlignCenter, Palette } from 'lucide-react'
+import { Loader2, Save, Undo, Redo, Wand2, Image as ImageIcon, Type, Download, Rocket, Github, MousePointerClick, FormInput, Square, Sparkles, Bold, AlignCenter, Palette, LogIn, LogOut } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { exportProjectAsZip } from '@/lib/export-utils'
 
 export default function EditorPage() {
   const params = useParams()
+  const { data: session, status: authStatus } = useSession()
   const [project, setProject] = useState<Project | null>(null)
   const [loading, setLoading] = useState(true)
   const iframeRef = useRef<HTMLIFrameElement>(null)
@@ -290,15 +292,15 @@ export default function EditorPage() {
           // Update local state without re-rendering iframe
           const newHtml = e.data.html;
           setProject(prev => prev ? ({ ...prev, html: newHtml }) : null)
-          
+
           // Add to history
           setHistory(prev => {
-             const newHistory = prev.slice(0, historyIndex + 1);
-             // Prevent duplicate consecutive states
-             if (newHistory[newHistory.length - 1] === newHtml) return prev;
-             newHistory.push(newHtml);
-             setHistoryIndex(newHistory.length - 1);
-             return newHistory;
+            const newHistory = prev.slice(0, historyIndex + 1);
+            // Prevent duplicate consecutive states
+            if (newHistory[newHistory.length - 1] === newHtml) return prev;
+            newHistory.push(newHtml);
+            setHistoryIndex(newHistory.length - 1);
+            return newHistory;
           });
         }
       } else if (e.data.type === 'IMAGE_SELECTED' || e.data.type === 'ELEMENT_CLICK') {
@@ -326,30 +328,30 @@ export default function EditorPage() {
 
   // Setup Initial History
   useEffect(() => {
-      if (project && history.length === 0) {
-          setHistory([project.html]);
-          setHistoryIndex(0);
-      }
+    if (project && history.length === 0) {
+      setHistory([project.html]);
+      setHistoryIndex(0);
+    }
   }, [project, history.length])
 
   const handleUndo = () => {
-      if (historyIndex > 0) {
-          const prevIndex = historyIndex - 1;
-          const prevHtml = history[prevIndex];
-          setHistoryIndex(prevIndex);
-          setProject(prev => prev ? { ...prev, html: prevHtml } : null);
-          iframeRef.current?.contentWindow?.postMessage({ type: 'UPDATE_HTML', html: prevHtml }, '*');
-      }
+    if (historyIndex > 0) {
+      const prevIndex = historyIndex - 1;
+      const prevHtml = history[prevIndex];
+      setHistoryIndex(prevIndex);
+      setProject(prev => prev ? { ...prev, html: prevHtml } : null);
+      iframeRef.current?.contentWindow?.postMessage({ type: 'UPDATE_HTML', html: prevHtml }, '*');
+    }
   }
 
   const handleRedo = () => {
-      if (historyIndex < history.length - 1) {
-          const nextIndex = historyIndex + 1;
-          const nextHtml = history[nextIndex];
-          setHistoryIndex(nextIndex);
-          setProject(prev => prev ? { ...prev, html: nextHtml } : null);
-          iframeRef.current?.contentWindow?.postMessage({ type: 'UPDATE_HTML', html: nextHtml }, '*');
-      }
+    if (historyIndex < history.length - 1) {
+      const nextIndex = historyIndex + 1;
+      const nextHtml = history[nextIndex];
+      setHistoryIndex(nextIndex);
+      setProject(prev => prev ? { ...prev, html: nextHtml } : null);
+      iframeRef.current?.contentWindow?.postMessage({ type: 'UPDATE_HTML', html: nextHtml }, '*');
+    }
   }
 
   const handleSave = () => {
@@ -532,10 +534,10 @@ export default function EditorPage() {
   const handleQuickStyle = (styleProp: string, styleValue: string) => {
     if (!aiPopup || !iframeRef.current) return;
     iframeRef.current.contentWindow?.postMessage({
-        type: 'APPLY_STYLE',
-        ptId: aiPopup.ptId,
-        styleProp,
-        styleValue
+      type: 'APPLY_STYLE',
+      ptId: aiPopup.ptId,
+      styleProp,
+      styleValue
     }, '*');
   }
 
@@ -619,16 +621,47 @@ export default function EditorPage() {
             style={{ background: 'var(--bg-sidebar)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}>
             <Download className="w-3.5 h-3.5" /> Export
           </button>
-          <button onClick={handleDeployVercel}
-            className="flex items-center gap-1.5 px-3.5 h-8 rounded-lg text-xs font-semibold transition-all text-white"
-            style={{ background: '#000' }}>
-            <Rocket className="w-3.5 h-3.5" /> Vercel
-          </button>
-          <button onClick={handleDeployGithub}
-            className="flex items-center gap-1.5 px-3.5 h-8 rounded-lg text-xs font-semibold transition-all text-white"
-            style={{ background: '#24292e' }}>
-            <Github className="w-3.5 h-3.5" /> GitHub
-          </button>
+
+          <div className="w-px h-5 mx-1" style={{ background: 'var(--border)' }} />
+
+          {session ? (
+            <>
+              <button onClick={handleDeployVercel}
+                className="flex items-center gap-1.5 px-3.5 h-8 rounded-lg text-xs font-semibold transition-all text-white"
+                style={{ background: '#000' }}>
+                <Rocket className="w-3.5 h-3.5" /> Vercel
+              </button>
+              <button onClick={handleDeployGithub}
+                className="flex items-center gap-1.5 px-3.5 h-8 rounded-lg text-xs font-semibold transition-all text-white"
+                style={{ background: '#24292e' }}>
+                <Github className="w-3.5 h-3.5" /> GitHub
+              </button>
+
+              <div className="w-px h-5 mx-1" style={{ background: 'var(--border)' }} />
+
+              <div className="flex items-center gap-2">
+                {session.user?.image && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={session.user.image} alt="" className="w-6 h-6 rounded-full" style={{ border: '1.5px solid var(--border)' }} />
+                )}
+                <span className="text-[11px] font-medium max-w-[80px] truncate" style={{ color: 'var(--text-secondary)' }}>
+                  {session.user?.name || 'User'}
+                </span>
+                <button onClick={() => signOut()}
+                  className="flex items-center justify-center w-7 h-7 rounded-lg transition-all"
+                  style={{ border: '1px solid var(--border)', background: 'var(--bg-card)' }}
+                  title="Sign out">
+                  <LogOut className="w-3 h-3" style={{ color: 'var(--text-muted)' }} />
+                </button>
+              </div>
+            </>
+          ) : (
+            <button onClick={() => signIn('github')}
+              className="flex items-center gap-1.5 px-4 h-8 rounded-lg text-xs font-semibold transition-all text-white"
+              style={{ background: '#24292e' }}>
+              <LogIn className="w-3.5 h-3.5" /> Sign in with GitHub
+            </button>
+          )}
         </div>
       </header>
 

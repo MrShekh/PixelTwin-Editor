@@ -1,4 +1,5 @@
 import { Hero } from "@/components/landing/Hero";
+import { AuthHeader } from "@/components/landing/AuthHeader";
 
 export default function Home() {
   return (
@@ -14,6 +15,7 @@ export default function Home() {
           opacity: 0.6,
         }}
       />
+      <AuthHeader />
       <div className="relative z-10 w-full max-w-7xl px-4">
         <Hero />
       </div>
