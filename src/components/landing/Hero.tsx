@@ -15,25 +15,41 @@ export function Hero() {
         if (!url) return
         setLoading(true)
         try {
-            const res = await fetch('/api/clone', {
+            const isFigma = url.includes("figma.com");
+            const apiRoute = isFigma ? '/api/figma' : '/api/clone';
+
+            const res = await fetch(apiRoute, {
                 method: 'POST',
-                body: JSON.stringify({ url }),
+                body: JSON.stringify({ url }), // the figma token is currently handled server-side from .env
             })
-            if (!res.ok) throw new Error('Failed to clone')
+            if (!res.ok) {
+                const errorData = await res.json().catch(() => ({}));
+                throw new Error(errorData.error || 'Failed to clone');
+            }
             const data = await res.json()
 
+            let generatedHtml = data.html;
+            let cssAssets = data.assets?.styles || [];
+            let imageAssets = data.assets?.images || [];
+
+            let projectName = "New Project";
+            try {
+                projectName = isFigma ? "Figma Import" : new URL(url).hostname;
+            } catch (e) {}
+
             const project = await createProject({
-                name: new URL(url).hostname,
+                name: projectName,
                 originalUrl: url,
                 html: data.html,
-                css: data.assets.styles,
-                assets: data.assets.images
+                css: data.assets?.styles || [],
+                assets: data.assets?.images || []
             })
 
             router.push(`/editor/${project.id}`)
-        } catch (error) {
-            console.error(error)
-            alert("Failed to clone website. Please try again.")
+        } catch (error: any) {
+            console.error('Clone Error:', error)
+            const msg = error?.message || (typeof error === 'object' ? JSON.stringify(error) : String(error));
+            alert("Failed: " + (msg === '{}' ? "Puter AI request failed. Please check your Puter account/limits." : msg))
         } finally {
             setLoading(false)
         }
@@ -116,7 +132,7 @@ export function Hero() {
                         <MonitorPlay className="w-4 h-4 shrink-0" style={{ color: 'var(--text-muted)' }} />
                         <input
                             type="url"
-                            placeholder="Paste any website URL…"
+                            placeholder="Paste a Website or Figma URL…"
                             value={url}
                             onChange={(e) => setUrl(e.target.value)}
                             required

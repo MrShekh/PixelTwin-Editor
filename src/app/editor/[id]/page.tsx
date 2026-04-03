@@ -435,9 +435,40 @@ export default function EditorPage() {
     }
   }
 
+  // AI Provider status
+  const [aiProvider, setAiProvider] = useState<string>('')
+
+  // Helper: Try Puter/Claude first
+  const tryPuterAI = async (prompt: string): Promise<string | null> => {
+    try {
+      const puter = (window as any).puter;
+      if (!puter) return null;
+
+      const response = await puter.ai.chat(prompt, { model: 'claude-sonnet-4-6' });
+      const text = response?.message?.content?.[0]?.text;
+      if (!text) return null;
+
+      return text.replace(/```html/g, '').replace(/```/g, '').trim();
+    } catch (e: any) {
+      console.warn('Puter/Claude failed:', e.message || e);
+      return null;
+    }
+  }
+
+  // Helper: Fallback to Groq backend
+  const tryGroqAPI = async (endpoint: string, body: object): Promise<any> => {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    return await res.json();
+  }
+
   const handleAiEdit = async () => {
     if (!aiPrompt || !project || !iframeRef.current) return;
     setAiLoading(true);
+    setAiProvider('');
 
     try {
       const doc = iframeRef.current.contentDocument;
@@ -457,23 +488,37 @@ export default function EditorPage() {
         targetHtml = doc.body.innerHTML;
       }
 
-      if (targetHtml.length > 80000) {
-        alert("Content too large. Please select a smaller element.");
-        if (uniqueId) selectedEl?.removeAttribute('data-ai-target-id');
-        setAiLoading(false);
-        return;
+      let modifiedContent: string | null = null;
+
+      // ── Try 1: Puter / Claude (200K context, better quality) ──
+      setAiProvider('Trying Claude…');
+      const claudePrompt = isFullPage
+        ? `You are a web content editor. Modify the HTML body content below based on the request.\nRequest: ${aiPrompt}\n\nHTML Body:\n${targetHtml}\n\nReturn ONLY the modified HTML body content. No markdown. No explanations.`
+        : `You are an expert web content editor. Modify the HTML element below according to the request, preserving the data-ai-target-id attribute.\nRequest: ${aiPrompt}\n\nTarget Element HTML:\n${targetHtml}\n\nReturn ONLY the modified HTML. No markdown. Keep the data-ai-target-id="${uniqueId}" attribute.`;
+
+      modifiedContent = await tryPuterAI(claudePrompt);
+
+      // ── Try 2: Groq fallback (fast, free, 8K output) ──
+      if (!modifiedContent) {
+        setAiProvider('Falling back to Groq…');
+
+        if (targetHtml.length > 80000) {
+          alert("Content too large for Groq. Please select a smaller element.");
+          if (uniqueId) selectedEl?.removeAttribute('data-ai-target-id');
+          setAiLoading(false);
+          setAiProvider('');
+          return;
+        }
+
+        const data = await tryGroqAPI('/api/ai', { prompt: aiPrompt, html: targetHtml });
+        modifiedContent = data.modifiedHtml;
+        if (!modifiedContent) throw new Error(data.message || data.error || 'Both AI providers failed');
+        setAiProvider('Groq ✓');
+      } else {
+        setAiProvider('Claude ✓');
       }
 
-      const res = await fetch('/api/ai', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: aiPrompt, html: targetHtml })
-      });
-      const data = await res.json();
-      let modifiedContent = data.modifiedHtml;
-
-      if (!modifiedContent) throw new Error(data.message || data.error || 'Empty response');
-
+      // Apply the result
       if (isFullPage) {
         doc.body.innerHTML = modifiedContent;
       } else {
@@ -491,8 +536,12 @@ export default function EditorPage() {
       setProject({ ...project, html: doc.body.innerHTML });
       setAiPrompt("");
 
+      // Clear provider indicator after 3s
+      setTimeout(() => setAiProvider(''), 3000);
+
     } catch (e: any) {
       alert("AI Edit Failed: " + (e.message || "Unknown error"));
+      setAiProvider('');
     } finally {
       setAiLoading(false);
     }
@@ -501,31 +550,48 @@ export default function EditorPage() {
   const handleInlineSnippetAiEdit = async () => {
     if (!aiSnippetPrompt || !aiPopup || !iframeRef.current) return;
     setAiSnippetLoading(true);
+    setAiProvider('');
 
     try {
-      const res = await fetch('/api/ai/snippet', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      let modifiedHtml: string | null = null;
+
+      // ── Try 1: Puter / Claude ──
+      setAiProvider('Trying Claude…');
+      const claudePrompt = `You are an expert web frontend developer. Modify this HTML element based on the request.\nRequest: ${aiSnippetPrompt}\n\nOriginal Element HTML:\n${aiPopup.outerHTML}\n\nReturn ONLY the modified HTML. No markdown. No explanations.`;
+
+      modifiedHtml = await tryPuterAI(claudePrompt);
+
+      // ── Try 2: Groq fallback ──
+      if (!modifiedHtml) {
+        setAiProvider('Falling back to Groq…');
+        const data = await tryGroqAPI('/api/ai/snippet', {
           prompt: aiSnippetPrompt,
           outerHTML: aiPopup.outerHTML
-        })
-      });
-      const data = await res.json();
+        });
 
-      if (data.modifiedHtml && data.success) {
-        iframeRef.current.contentWindow?.postMessage({
-          type: 'REPLACE_ELEMENT',
-          ptId: aiPopup.ptId,
-          html: data.modifiedHtml
-        }, '*');
-        setAiPopup((prev) => prev ? { ...prev, visible: false } : null);
-        setAiSnippetPrompt("");
+        if (data.modifiedHtml && data.success) {
+          modifiedHtml = data.modifiedHtml;
+          setAiProvider('Groq ✓');
+        } else {
+          throw new Error(data.message || data.error || 'Both AI providers failed');
+        }
       } else {
-        alert("AI Edit Failed: " + (data.message || data.error || 'Empty response'));
+        setAiProvider('Claude ✓');
       }
+
+      iframeRef.current.contentWindow?.postMessage({
+        type: 'REPLACE_ELEMENT',
+        ptId: aiPopup.ptId,
+        html: modifiedHtml
+      }, '*');
+      setAiPopup((prev) => prev ? { ...prev, visible: false } : null);
+      setAiSnippetPrompt("");
+
+      setTimeout(() => setAiProvider(''), 3000);
+
     } catch (e: any) {
-      alert("AI Inline Edit Failed: " + (e.message || "Unknown error"));
+      alert("AI Edit Failed: " + (e.message || "Unknown error"));
+      setAiProvider('');
     } finally {
       setAiSnippetLoading(false);
     }
@@ -753,7 +819,7 @@ export default function EditorPage() {
                 className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-xs font-semibold text-white transition-all disabled:opacity-50"
                 style={{ background: 'linear-gradient(135deg, var(--accent), #F59E0B)' }}>
                 {aiLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
-                {aiLoading ? 'Working…' : 'Apply with AI'}
+                {aiProvider ? aiProvider : (aiLoading ? 'Working…' : 'Apply with AI')}
               </button>
             </div>
           </div>
@@ -879,7 +945,7 @@ export default function EditorPage() {
                   className="flex-1 py-2 rounded-lg text-xs font-semibold transition-all disabled:opacity-50 text-white flex items-center justify-center gap-1.5"
                   style={{ background: 'linear-gradient(135deg, var(--accent), #F59E0B)' }}>
                   {aiSnippetLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-                  {aiSnippetLoading ? 'Working…' : 'Apply'}
+                  {aiProvider ? aiProvider : (aiSnippetLoading ? 'Working…' : 'Apply')}
                 </button>
               </div>
             </div>
