@@ -128,23 +128,52 @@ Crucial Requirements:
 4. Do NOT use absolute positioning. Use the padding/gap logic provided.
 5. Return perfectly formatted nested elements.`;
 
-        let chatCompletion;
+        let generatedHtml = "";
+
+        // 1. Try OpenRouter (Claude 3.5 Sonnet) Main Engine
         try {
-            chatCompletion = await groq.chat.completions.create({
-                model: "llama-3.3-70b-versatile",
-                messages: [
-                    { role: "system", content: systemPrompt },
-                    { role: "user", content: "Figma JSON Data:\n" + extractedDetails }
-                ],
-                temperature: 0.1,
-                max_tokens: 8000,
+            if (!process.env.OPENROUTER_API_KEY) {
+                throw new Error("OPENROUTER_API_KEY is not set in .env. Skipping to backup.");
+            }
+            console.log(`[Figma Clone] Attempting OpenRouter (Claude 3.5 Sonnet)...`);
+            
+            const orRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    model: "anthropic/claude-3.5-sonnet", // The best model for frontend generation
+                    messages: [
+                        { role: "system", content: systemPrompt },
+                        { role: "user", content: "Figma JSON Data:\n" + extractedDetails }
+                    ],
+                    temperature: 0.1
+                })
             });
-        } catch (e: any) {
-            console.log(`[Figma Clone] 70B Model hit limit (${e.message}), trying fallback model...`);
+
+            if (!orRes.ok) {
+                const errData = await orRes.text();
+                throw new Error(`OpenRouter API error: ${orRes.status} ${errData}`);
+            }
+
+            const orData = await orRes.json();
+            if (orData.error) {
+                throw new Error(orData.error.message || "Unknown OpenRouter error");
+            }
+            
+            generatedHtml = orData.choices[0]?.message?.content || "";
+            console.log(`[Figma Clone] OpenRouter generation successful.`);
+
+        } catch (orError: any) {
+            console.log(`[Figma Clone] OpenRouter failed/skipped: ${orError.message}`);
+            console.log(`[Figma Clone] Falling back to Groq (Llama)...`);
+            
+            let chatCompletion;
             try {
-                // Fallback to high-capacity 8b if rate limited (429)
                 chatCompletion = await groq.chat.completions.create({
-                    model: "llama-3.1-8b-instant", // Much higher free tier limits
+                    model: "llama-3.3-70b-versatile",
                     messages: [
                         { role: "system", content: systemPrompt },
                         { role: "user", content: "Figma JSON Data:\n" + extractedDetails }
@@ -152,15 +181,31 @@ Crucial Requirements:
                     temperature: 0.1,
                     max_tokens: 8000,
                 });
-            } catch (fallbackError: any) {
-                console.error(`[Figma Clone] 8B Fallback Model also failed: ${fallbackError.message}`);
-                const err = new Error(`Groq AI Rate Limit Exceeded. Wait a moment and try again. Details: ${fallbackError.message}`);
-                (err as any).status = 429;
-                throw err;
+            } catch (e: any) {
+                console.log(`[Figma Clone] 70B Model hit limit (${e.message}), trying fallback model...`);
+                try {
+                    // Fallback to high-capacity 8b if rate limited (429)
+                    chatCompletion = await groq.chat.completions.create({
+                        model: "llama-3.1-8b-instant", // Much higher free tier limits
+                        messages: [
+                            { role: "system", content: systemPrompt },
+                            { role: "user", content: "Figma JSON Data:\n" + extractedDetails }
+                        ],
+                        temperature: 0.1,
+                        max_tokens: 8000,
+                    });
+                } catch (fallbackError: any) {
+                    console.error(`[Figma Clone] 8B Fallback Model also failed: ${fallbackError.message}`);
+                    const err = new Error(`Groq AI Rate Limit Exceeded. Wait a moment and try again. Details: ${fallbackError.message}`);
+                    (err as any).status = 429;
+                    throw err;
+                }
             }
+            
+            generatedHtml = chatCompletion.choices[0]?.message?.content || "";
+            console.log(`[Figma Clone] Groq Fallback generation successful.`);
         }
 
-        let generatedHtml = chatCompletion.choices[0]?.message?.content || "";
         generatedHtml = generatedHtml.replace(/```html/gi, '').replace(/```/g, '').trim();
 
         console.log(`[Figma Clone] Generation complete. (${generatedHtml.length} bytes)`);
