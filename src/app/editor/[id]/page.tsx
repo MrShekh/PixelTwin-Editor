@@ -35,6 +35,7 @@ export default function EditorPage() {
   } | null>(null);
   const [aiSnippetPrompt, setAiSnippetPrompt] = useState("");
   const [aiSnippetLoading, setAiSnippetLoading] = useState(false);
+  const [integrationInput, setIntegrationInput] = useState("");
 
   // Load project
   useEffect(() => {
@@ -547,8 +548,11 @@ export default function EditorPage() {
     }
   }
 
-  const handleInlineSnippetAiEdit = async () => {
-    if (!aiSnippetPrompt || !aiPopup || !iframeRef.current) return;
+  const handleInlineSnippetAiEdit = async (overridePrompt?: string | React.MouseEvent | React.KeyboardEvent) => {
+    const isOverrideStr = typeof overridePrompt === 'string';
+    const promptToUse = isOverrideStr ? overridePrompt : aiSnippetPrompt;
+    
+    if (!promptToUse || !aiPopup || !iframeRef.current) return;
     setAiSnippetLoading(true);
     setAiProvider('');
 
@@ -557,7 +561,7 @@ export default function EditorPage() {
 
       // ── Try 1: Puter / Claude ──
       setAiProvider('Trying Claude…');
-      const claudePrompt = `You are an expert web frontend developer. Modify this HTML element based on the request.\nRequest: ${aiSnippetPrompt}\n\nOriginal Element HTML:\n${aiPopup.outerHTML}\n\nReturn ONLY the modified HTML. No markdown. No explanations.`;
+      const claudePrompt = `You are an expert web frontend developer. Modify this HTML element based on the request.\nRequest: ${promptToUse}\n\nOriginal Element HTML:\n${aiPopup.outerHTML}\n\nReturn ONLY the modified HTML. No markdown. No explanations.`;
 
       modifiedHtml = await tryPuterAI(claudePrompt);
 
@@ -565,7 +569,7 @@ export default function EditorPage() {
       if (!modifiedHtml) {
         setAiProvider('Falling back to Groq…');
         const data = await tryGroqAPI('/api/ai/snippet', {
-          prompt: aiSnippetPrompt,
+          prompt: promptToUse,
           outerHTML: aiPopup.outerHTML
         });
 
@@ -585,7 +589,8 @@ export default function EditorPage() {
         html: modifiedHtml
       }, '*');
       setAiPopup((prev) => prev ? { ...prev, visible: false } : null);
-      setAiSnippetPrompt("");
+      if (!isOverrideStr) setAiSnippetPrompt("");
+      setIntegrationInput("");
 
       setTimeout(() => setAiProvider(''), 3000);
 
@@ -913,6 +918,68 @@ export default function EditorPage() {
                   >{label}</button>
                 ))}
               </div>
+
+              {/* Dynamic Backend Integrations */}
+              {['FORM', 'A', 'IMG', 'DIV', 'SECTION'].includes(aiPopup.tagName) && (
+                <div className="mb-4">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>
+                    {aiPopup.tagName === 'FORM' ? 'Add Form Backend' : 'Add Dynamic Link/Map'}
+                  </p>
+                  <div className="flex gap-2">
+                    <input
+                      type={aiPopup.tagName === 'FORM' ? "email" : "text"}
+                      placeholder={
+                        aiPopup.tagName === 'FORM' ? "Email to receive submissions" :
+                        ['A', 'IMG'].includes(aiPopup.tagName) ? "Link URL or WhatsApp number (e.g. +12...)" :
+                        "Map Location (e.g. New York)"
+                      }
+                      value={integrationInput}
+                      onChange={(e) => setIntegrationInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          let prompt = "";
+                          if (aiPopup.tagName === 'FORM') {
+                             prompt = `Make this form functional. Set the action to "https://formsubmit.co/${integrationInput}" and method="POST". Ensure every <input>, <textarea>, and <select> has a valid 'name' attribute. Preserving existing styling exactly.`;
+                          } else if (['A', 'IMG'].includes(aiPopup.tagName)) {
+                             let link = integrationInput;
+                             if (/^[+0-9\s-]+$/.test(integrationInput) && integrationInput.replace(/[^0-9]/g, '').length >= 7) {
+                               link = `https://wa.me/${integrationInput.replace(/[^0-9]/g, '')}`;
+                             }
+                             prompt = `Make this element a functional link. If it's an <img>, wrap it in an <a> tag. Set the href to "${link}". Ensure target="_blank" is used. Preserve all styling on the inner element.`;
+                          } else {
+                             prompt = `Replace the inner content of this container with a responsive Google Maps iframe (width 100%, min-height 300px, border 0) pointing to the location: "${integrationInput}". Use the URL format: https://maps.google.com/maps?q=${encodeURIComponent(integrationInput)}&output=embed. Preserve container styling.`;
+                          }
+                          handleInlineSnippetAiEdit(prompt);
+                        }
+                      }}
+                      className="flex-1 rounded-lg px-3 py-2 text-xs outline-none"
+                      style={{ background: 'var(--bg-sidebar)', border: '1px solid var(--border)', color: 'var(--text-primary)', caretColor: 'var(--accent)' }}
+                    />
+                    <button
+                      disabled={aiSnippetLoading || !integrationInput.trim()}
+                      onClick={() => {
+                        let prompt = "";
+                        if (aiPopup.tagName === 'FORM') {
+                           prompt = `Make this form functional. Set the action to "https://formsubmit.co/${integrationInput}" and method="POST". Ensure every <input>, <textarea>, and <select> has a valid 'name' attribute. Preserving existing styling exactly.`;
+                        } else if (['A', 'IMG'].includes(aiPopup.tagName)) {
+                           let link = integrationInput;
+                           if (/^[+0-9\s-]+$/.test(integrationInput) && integrationInput.replace(/[^0-9]/g, '').length >= 7) {
+                             link = `https://wa.me/${integrationInput.replace(/[^0-9]/g, '')}`;
+                           }
+                           prompt = `Make this element a functional link. If it's an <img>, wrap it in an <a> tag. Set the href to "${link}". Ensure target="_blank" is used. Preserve all styling on the inner element.`;
+                        } else {
+                           prompt = `Replace the inner content of this container with a responsive Google Maps iframe (width 100%, min-height 300px, border 0) pointing to the location: "${integrationInput}". Use the URL format: https://maps.google.com/maps?q=${encodeURIComponent(integrationInput)}&output=embed. Preserve container styling.`;
+                        }
+                        handleInlineSnippetAiEdit(prompt);
+                      }}
+                      className="px-3 py-2 rounded-lg text-xs font-semibold transition-all disabled:opacity-50 text-white flex items-center justify-center whitespace-nowrap"
+                      style={{ background: 'var(--accent)' }}>
+                      {aiSnippetLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Apply'}
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* AI prompt */}
               <p className="text-[10px] font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>

@@ -46,14 +46,40 @@ export async function POST(request: Request) {
 
         console.log(`[Figma Clone] Fetching from Figma API... File: ${fileKey}, Node: ${nodeId}`);
 
+        // Helper to handle rate limits automatically
+        const fetchFigmaWithRetry = async (url: string, retries = 2) => {
+            for (let i = 0; i <= retries; i++) {
+                const res = await fetch(url, { 
+                    headers: { 'X-Figma-Token': figmaToken },
+                    cache: 'no-store'
+                });
+                if (res.status === 429 && i < retries) {
+                    const retryAfter = res.headers.get('Retry-After');
+                    let parsed = parseInt(retryAfter || '');
+                    
+                    // If it is a huge number, it might be a timestamp, but either way we shouldn't wait.
+                    let waitTime = !isNaN(parsed) && parsed > 0 ? parsed * 1000 : 2000;
+                    
+                    if (waitTime > 10000) {
+                        const seconds = Math.round(waitTime / 1000);
+                        throw new Error(`Figma API Hard Rate Limit Active. Wait required: ${seconds} seconds. Please use a new Figma Personal Access Token or wait.`);
+                    }
+
+                    console.log(`[Figma API] Rate limited (429). Retrying after ${waitTime}ms...`);
+                    await new Promise(resolve => setTimeout(resolve, waitTime));
+                    continue;
+                }
+                return res;
+            }
+            return fetch(url, { headers: { 'X-Figma-Token': figmaToken }, cache: 'no-store' });
+        };
+
         // If no nodeId provided, we must get the document structure to find the first frame
         if (!nodeId) {
-            const fileRes = await fetch(`https://api.figma.com/v1/files/${fileKey}`, {
-                headers: { 'X-Figma-Token': figmaToken }
-            });
+            const fileRes = await fetchFigmaWithRetry(`https://api.figma.com/v1/files/${fileKey}`);
             
             if (!fileRes.ok) {
-                return NextResponse.json({ error: 'Failed to access Figma file. Check permissions or token.' }, { status: fileRes.status });
+                return NextResponse.json({ error: 'Failed to access Figma file. Check permissions or rate limits.' }, { status: fileRes.status });
             }
 
             const fileData = await fileRes.json();
@@ -73,12 +99,10 @@ export async function POST(request: Request) {
         }
 
         // 1. Fetch Node JSON Data for structure, text, and colors
-        const nodeRes = await fetch(`https://api.figma.com/v1/files/${fileKey}/nodes?ids=${nodeId}`, {
-            headers: { 'X-Figma-Token': figmaToken }
-        });
+        const nodeRes = await fetchFigmaWithRetry(`https://api.figma.com/v1/files/${fileKey}/nodes?ids=${nodeId}`);
 
         if (!nodeRes.ok) {
-            return NextResponse.json({ error: 'Failed to access Figma node JSON.' }, { status: nodeRes.status });
+            return NextResponse.json({ error: 'Failed to access Figma node JSON. You may have hit a hard rate limit.' }, { status: nodeRes.status });
         }
 
         const nodeData = await nodeRes.json();
@@ -117,16 +141,23 @@ Crucial Requirements:
             });
         } catch (e: any) {
             console.log(`[Figma Clone] 70B Model hit limit (${e.message}), trying fallback model...`);
-            // Fallback to high-capacity 8b if rate limited (429)
-            chatCompletion = await groq.chat.completions.create({
-                model: "llama-3.1-8b-instant", // Much higher free tier limits
-                messages: [
-                    { role: "system", content: systemPrompt },
-                    { role: "user", content: "Figma JSON Data:\n" + extractedDetails }
-                ],
-                temperature: 0.1,
-                max_tokens: 8000,
-            });
+            try {
+                // Fallback to high-capacity 8b if rate limited (429)
+                chatCompletion = await groq.chat.completions.create({
+                    model: "llama-3.1-8b-instant", // Much higher free tier limits
+                    messages: [
+                        { role: "system", content: systemPrompt },
+                        { role: "user", content: "Figma JSON Data:\n" + extractedDetails }
+                    ],
+                    temperature: 0.1,
+                    max_tokens: 8000,
+                });
+            } catch (fallbackError: any) {
+                console.error(`[Figma Clone] 8B Fallback Model also failed: ${fallbackError.message}`);
+                const err = new Error(`Groq AI Rate Limit Exceeded. Wait a moment and try again. Details: ${fallbackError.message}`);
+                (err as any).status = 429;
+                throw err;
+            }
         }
 
         let generatedHtml = chatCompletion.choices[0]?.message?.content || "";
@@ -141,9 +172,10 @@ Crucial Requirements:
 
     } catch (error: any) {
         console.error('[Figma Drop Error]', error);
+        const isRateLimit = error?.status === 429 || error?.message?.includes('Rate Limit');
         return NextResponse.json({ 
-            error: 'Internal server error while parsing Figma',
+            error: isRateLimit ? error.message : 'Internal server error while parsing Figma',
             message: error.message || 'Unknown error'
-        }, { status: 500 });
+        }, { status: error.status || (isRateLimit ? 429 : 500) });
     }
 }
