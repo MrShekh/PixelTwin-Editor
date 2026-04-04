@@ -1,6 +1,8 @@
 "use client"
 import { useSession, signIn, signOut } from "next-auth/react"
 import { Github, LogOut } from "lucide-react"
+import Image from "next/image"
+import logo from "@/assets/logo.png"
 
 export function AuthHeader() {
     const { data: session } = useSession()
@@ -8,8 +10,8 @@ export function AuthHeader() {
     return (
         <header className="relative z-20 w-full flex items-center justify-between px-6 py-3"
             style={{ borderBottom: '1px solid var(--border)' }}>
-            <div className="font-black text-base tracking-tight" style={{ color: 'var(--text-primary)' }}>
-                <span style={{ color: 'var(--accent)' }}>Pixel</span>Twin
+            <div className="flex items-center">
+                <Image src={logo} alt="PixelTwin Logo" style={{ height: '32px', width: 'auto' }} priority />
             </div>
 
             {session ? (

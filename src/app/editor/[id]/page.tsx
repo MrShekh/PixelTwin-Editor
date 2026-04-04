@@ -7,7 +7,8 @@ import { Button } from '@/components/ui/button'
 import { Loader2, Save, Undo, Redo, Wand2, Image as ImageIcon, Type, Download, Rocket, Github, MousePointerClick, FormInput, Square, Sparkles, Bold, AlignCenter, Palette, LogIn, LogOut } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { exportProjectAsZip } from '@/lib/export-utils'
-
+import Image from 'next/image'
+import logo from '@/assets/logo.png'
 export default function EditorPage() {
   const params = useParams()
   const { data: session, status: authStatus } = useSession()
@@ -655,8 +656,8 @@ export default function EditorPage() {
         style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border)', boxShadow: 'var(--shadow-sm)' }}>
 
         <div className="flex items-center gap-3">
-          <div className="font-black text-base tracking-tight" style={{ color: 'var(--text-primary)' }}>
-            <span style={{ color: 'var(--accent)' }}>Pixel</span>Twin
+          <div className="flex items-center">
+            <Image src={logo} alt="PixelTwin Logo" style={{ height: '28px', width: 'auto' }} priority />
           </div>
           {project.name && (
             <span className="text-xs px-2.5 py-1 rounded-full font-medium"
