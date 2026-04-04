@@ -40,9 +40,10 @@ export function Hero() {
             const project = await createProject({
                 name: projectName,
                 originalUrl: url,
-                html: data.html,
+                html: data.html,          // full HTML document — includes all inlined CSS + :root vars
                 css: data.assets?.styles || [],
-                assets: data.assets?.images || []
+                assets: data.assets?.images || [],
+                ...(data.isJsHeavy ? { isJsHeavy: true } : {})
             })
 
             router.push(`/editor/${project.id}`)

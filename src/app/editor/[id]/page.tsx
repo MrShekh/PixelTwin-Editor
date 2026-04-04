@@ -20,6 +20,7 @@ export default function EditorPage() {
   const [aiLoading, setAiLoading] = useState(false)
   const [selectedImage, setSelectedImage] = useState<string | null>(null)
   const [selectedTag, setSelectedTag] = useState<string | null>(null)
+  const [isJsHeavy, setIsJsHeavy] = useState(false)
 
   // Undo / Redo History
   const [history, setHistory] = useState<string[]>([])
@@ -44,6 +45,8 @@ export default function EditorPage() {
       const loadProject = async () => {
         const p = await getProject(params.id as string)
         setProject(p)
+        // Check if this was flagged as a JS-heavy site
+        if ((p as any)?.isJsHeavy) setIsJsHeavy(true);
         setLoading(false)
       }
       loadProject()
@@ -53,235 +56,171 @@ export default function EditorPage() {
   // Initialize iframe content - Only once when project is loaded
   useEffect(() => {
     if (project && iframeRef.current && !isIframeLoaded) {
-      const doc = iframeRef.current.contentDocument
+      // project.html may be either:
+      //   A) Full HTML document (from clone API — includes <head> with all inlined CSS, :root vars, gsap fix)
+      //   B) Body-only fragment (from older saves or manual paste)
+      const isFullDoc = /^\s*<!DOCTYPE|^\s*<html/i.test(project.html);
+
+      const editorScript = `
+        <script>
+          // Intercept all clicks to prevent link navigation
+          window.addEventListener('click', (e) => {
+            const link = e.target.closest('a');
+            if (link) { e.preventDefault(); }
+          }, true);
+
+          // Editor Script
+          document.body.addEventListener('mouseover', (e) => {
+            e.stopPropagation();
+            if (e.target === document.body) return;
+            if (e.target.isContentEditable) return;
+            e.target.classList.add('pixeltwin-hover');
+          });
+          document.body.addEventListener('mouseout', (e) => {
+            e.stopPropagation();
+            e.target.classList.remove('pixeltwin-hover');
+          });
+          document.body.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (!e.target.hasAttribute('data-pt-id')) {
+              e.target.setAttribute('data-pt-id', 'pt-' + Date.now() + Math.random().toString(36).substring(2, 9));
+            }
+            const ptId = e.target.getAttribute('data-pt-id');
+            const rect = e.target.getBoundingClientRect();
+            const tagName = e.target.tagName.toUpperCase();
+            if (tagName === 'IMG') {
+               window.parent.postMessage({ type: 'IMAGE_SELECTED', src: e.target.src, tagName, rect, ptId, outerHTML: e.target.outerHTML }, '*');
+            } else {
+               window.parent.postMessage({ type: 'ELEMENT_CLICK', tagName, rect, ptId, outerHTML: e.target.outerHTML }, '*');
+            }
+            if (e.target.isContentEditable) return;
+            document.querySelectorAll('.pixeltwin-selected, .pixeltwin-editable').forEach(el => {
+              el.classList.remove('pixeltwin-selected', 'pixeltwin-editable');
+              if (el.getAttribute('contenteditable') === 'true') el.removeAttribute('contenteditable');
+            });
+            e.target.classList.add('pixeltwin-selected');
+          });
+          document.body.addEventListener('dblclick', (e) => {
+            e.stopPropagation(); e.preventDefault();
+            const tagName = e.target.tagName.toUpperCase();
+            // DIV intentionally excluded — double-clicking a dark wrapper div was forcing white bg on the whole page
+            const textTags = ['P','H1','H2','H3','H4','H5','H6','SPAN','A','LI','BUTTON','LABEL','EM','STRONG','I','B','TD','TH'];
+            if (textTags.includes(tagName)) {
+               e.target.style.setProperty('user-select','text','important');
+               e.target.style.setProperty('-webkit-user-select','text','important');
+               e.target.style.setProperty('pointer-events','auto','important');
+               e.target.contentEditable = 'true';
+               e.target.classList.add('pixeltwin-editable');
+               e.target.focus();
+               try {
+                 const range = document.createRange();
+                 const sel = window.getSelection();
+                 range.selectNodeContents(e.target);
+                 range.collapse(false);
+                 sel.removeAllRanges();
+                 sel.addRange(range);
+               } catch(err) {}
+            }
+          });
+          const sendUpdate = () => window.parent.postMessage({ type: 'CONTENT_UPDATE', html: document.body.innerHTML }, '*');
+          const observer = new MutationObserver(() => sendUpdate());
+          observer.observe(document.body, { subtree: true, childList: true, characterData: true });
+          document.body.addEventListener('focusout', (e) => {
+            if (e.target.isContentEditable) { sendUpdate(); e.target.removeAttribute('contenteditable'); e.target.classList.remove('pixeltwin-editable'); }
+          });
+          document.body.addEventListener('dragover', (e) => {
+            e.preventDefault(); e.stopPropagation();
+            document.querySelectorAll('.pixeltwin-selected').forEach(el => el.classList.remove('pixeltwin-selected'));
+            if (e.target !== document.body) e.target.classList.add('pixeltwin-selected');
+          });
+          document.body.addEventListener('drop', (e) => {
+            e.preventDefault(); e.stopPropagation();
+            const html = e.dataTransfer.getData('text/html');
+            if (html) {
+              const el = document.createElement('div'); el.innerHTML = html;
+              const newElement = el.firstElementChild;
+              if (e.target === document.body) { e.target.appendChild(newElement); }
+              else {
+                const rect = e.target.getBoundingClientRect();
+                const isTopHalf = (e.clientY - rect.top) < (rect.height / 2);
+                if (isTopHalf) e.target.parentNode.insertBefore(newElement, e.target);
+                else e.target.parentNode.insertBefore(newElement, e.target.nextSibling);
+              }
+              window.parent.postMessage({ type: 'CONTENT_UPDATE', html: document.body.innerHTML }, '*');
+            }
+          });
+          window.addEventListener('keydown', (e) => {
+            if (document.activeElement && document.activeElement.isContentEditable) {
+              if (e.key === 'Escape') document.activeElement.blur();
+              return;
+            }
+            if (e.key === 'Delete' || e.key === 'Backspace') {
+              const selected = document.querySelector('.pixeltwin-selected');
+              if (selected && selected !== document.body) { e.preventDefault(); selected.remove(); window.parent.postMessage({ type: 'CONTENT_UPDATE', html: document.body.innerHTML }, '*'); }
+            }
+          });
+          window.addEventListener('message', (event) => {
+            if (event.data.type === 'UPDATE_SELECTED_IMAGE') {
+              const selected = document.querySelector('.pixeltwin-selected');
+              if (selected && selected.tagName === 'IMG') { selected.src = event.data.src; window.parent.postMessage({ type: 'CONTENT_UPDATE', html: document.body.innerHTML }, '*'); }
+            } else if (event.data.type === 'UPDATE_HTML') {
+              document.body.innerHTML = event.data.html;
+            } else if (event.data.type === 'REPLACE_ELEMENT') {
+              const el = document.querySelector('[data-pt-id="' + event.data.ptId + '"]');
+              if (el && event.data.html) { el.outerHTML = event.data.html; window.parent.postMessage({ type: 'CONTENT_UPDATE', html: document.body.innerHTML }, '*'); }
+            } else if (event.data.type === 'APPLY_STYLE') {
+              const el = document.querySelector('[data-pt-id="' + event.data.ptId + '"]');
+              if (el) { el.style.setProperty(event.data.styleProp, event.data.styleValue, 'important'); window.parent.postMessage({ type: 'CONTENT_UPDATE', html: document.body.innerHTML }, '*'); }
+            } else if (event.data.type === 'ADD_ELEMENT') {
+              const selected = document.querySelector('.pixeltwin-selected') || document.body;
+              const el = document.createElement('div'); el.innerHTML = event.data.html;
+              selected.appendChild(el.firstElementChild); window.parent.postMessage({ type: 'CONTENT_UPDATE', html: document.body.innerHTML }, '*');
+            }
+          });
+        <\/script>`;
+
+      const editorStyles = `
+        <style id="pixeltwin-editor-ui">
+          .pixeltwin-hover { outline: 2px dashed #93c5fd !important; background-color: rgba(59,130,246,0.05) !important; cursor: default !important; }
+          .pixeltwin-selected { outline: 2px solid #f97316 !important; }
+          /* NOTE: NO background-color or color overrides here — they would turn dark sites white */
+          .pixeltwin-editable { user-select: text !important; -webkit-user-select: text !important; outline: 3px solid #3b82f6 !important; outline-offset: 3px !important; box-shadow: 0 0 0 6px rgba(59,130,246,0.15) !important; border-radius: 4px !important; cursor: text !important; z-index: 99999 !important; position: relative !important; min-width: 20px !important; }
+          body { padding-bottom: 100px; }
+        </style>`;
+
+      let finalHtml: string;
+
+      if (isFullDoc) {
+        // Full document: inject editor styles before </head> and editor script before </body>
+        finalHtml = project.html
+          .replace('</head>', `${editorStyles}\n</head>`)
+          .replace('</body>', `${editorScript}\n</body>`);
+        // Ensure base tag exists for relative URL resolution
+        if (!finalHtml.includes('<base ') && project.originalUrl) {
+          finalHtml = finalHtml.replace('<head>', `<head><base href="${project.originalUrl}" target="_blank">`);
+        }
+      } else {
+        // Body-only fragment (older saves): wrap in a full doc
+        finalHtml = `<!DOCTYPE html>
+<html>
+  <head>
+    <base href="${project.originalUrl || ''}" target="_blank">
+    ${(project.css || []).map((href: string) => `<link rel="stylesheet" href="${href}">`).join('\n')}
+    ${editorStyles}
+  </head>
+  <body>
+    ${project.html}
+    ${editorScript}
+  </body>
+</html>`;
+      }
+
+      const doc = iframeRef.current.contentDocument;
       if (doc) {
-        doc.open()
-        // Base structure
-        doc.write(`
-          <!DOCTYPE html>
-          <html>
-            <head>
-              <base href="${project.originalUrl || ''}" target="_blank">
-              ${project.css?.map(href => `<link rel="stylesheet" href="${href}">`).join('\n') || ''}
-              <style>
-                .pixeltwin-hover { outline: 2px dashed #93c5fd !important; background-color: rgba(59, 130, 246, 0.05) !important; cursor: default !important; }
-                .pixeltwin-selected { outline: 2px solid #f97316 !important; }
-                .pixeltwin-editable {
-                  user-select: text !important;
-                  -webkit-user-select: text !important;
-                  outline: 3px solid #3b82f6 !important;
-                  outline-offset: 4px !important;
-                  background-color: #ffffff !important;
-                  color: #000000 !important;
-                  box-shadow: 0 4px 12px rgba(0,0,0,0.1) !important;
-                  border-radius: 4px !important;
-                  cursor: text !important;
-                  z-index: 99999 !important;
-                  position: relative !important;
-                  min-width: 50px !important;
-                  display: inline-block !important;
-                }
-                body { padding-bottom: 100px; } /* Space for scrolling */
-              </style>
-            </head>
-            <body>
-              ${project.html}
-              <script>
-                // Intercept all clicks to prevent link navigation
-                window.addEventListener('click', (e) => {
-                  const link = e.target.closest('a');
-                  if (link) { e.preventDefault(); }
-                }, true);
-
-                // Editor Script
-                document.body.addEventListener('mouseover', (e) => {
-                  e.stopPropagation();
-                  if (e.target === document.body) return;
-                  if (e.target.isContentEditable) return; // Don't hover if we're actively typing
-                  e.target.classList.add('pixeltwin-hover');
-                });
-                
-                document.body.addEventListener('mouseout', (e) => {
-                  e.stopPropagation();
-                  e.target.classList.remove('pixeltwin-hover');
-                });
-                
-                // Single click to select
-                document.body.addEventListener('click', (e) => {
-                  e.stopPropagation();
-                  
-                  // Ensure element gets a unique tracking ID
-                  if (!e.target.hasAttribute('data-pt-id')) {
-                    e.target.setAttribute('data-pt-id', 'pt-' + Date.now() + Math.random().toString(36).substring(2, 9));
-                  }
-                  const ptId = e.target.getAttribute('data-pt-id');
-                  const rect = e.target.getBoundingClientRect();
-
-                  // Notify parent
-                  const tagName = e.target.tagName.toUpperCase();
-                  if (tagName === 'IMG') {
-                     window.parent.postMessage({ type: 'IMAGE_SELECTED', src: e.target.src, tagName, rect, ptId, outerHTML: e.target.outerHTML }, '*');
-                  } else {
-                     window.parent.postMessage({ type: 'ELEMENT_CLICK', tagName, rect, ptId, outerHTML: e.target.outerHTML }, '*');
-                  }
-
-                  // If element is currently being edited, don't interfere with the click
-                  if (e.target.isContentEditable) {
-                    return; 
-                  }
-                  
-                  // Selection visual reset
-                  document.querySelectorAll('.pixeltwin-selected, .pixeltwin-editable').forEach(el => {
-                    el.classList.remove('pixeltwin-selected', 'pixeltwin-editable');
-                    if (el.getAttribute('contenteditable') === 'true') {
-                      el.removeAttribute('contenteditable');
-                    }
-                  });
-                  
-                  e.target.classList.add('pixeltwin-selected');
-                });
-
-                // Double click to tightly focus and edit text
-                document.body.addEventListener('dblclick', (e) => {
-                  e.stopPropagation();
-                  e.preventDefault();
-
-                  const tagName = e.target.tagName.toUpperCase();
-                  const textTags = ['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'SPAN', 'DIV', 'A', 'LI', 'BUTTON', 'LABEL', 'EM', 'STRONG', 'I', 'B'];
-                  
-                  if (textTags.includes(tagName)) {
-                     // Aggressively override styles that might prevent selection or typing
-                     e.target.style.setProperty('user-select', 'text', 'important');
-                     e.target.style.setProperty('-webkit-user-select', 'text', 'important');
-                     e.target.style.setProperty('pointer-events', 'auto', 'important');
-                     
-                     e.target.contentEditable = 'true';
-                     e.target.classList.add('pixeltwin-editable');
-                     e.target.focus();
-                     
-                     // Move cursor to the end or where clicked if possible
-                     try {
-                        const range = document.createRange();
-                        const sel = window.getSelection();
-                        range.selectNodeContents(e.target);
-                        range.collapse(false);
-                        sel.removeAllRanges();
-                        sel.addRange(range);
-                     } catch(err) {}
-                  }
-                });
-                
-                // Sync changes back to parent
-                const sendUpdate = () => {
-                  window.parent.postMessage({ type: 'CONTENT_UPDATE', html: document.body.innerHTML }, '*');
-                };
-
-                const observer = new MutationObserver(() => {
-                   sendUpdate();
-                });
-                observer.observe(document.body, { subtree: true, childList: true, characterData: true });
-
-                // Ensure typing changes are synced when losing focus
-                document.body.addEventListener('focusout', (e) => {
-                  if (e.target.isContentEditable) {
-                     sendUpdate();
-                     e.target.removeAttribute('contenteditable');
-                     e.target.classList.remove('pixeltwin-editable');
-                  }
-                });
-
-                // Drag and drop handlers
-                document.body.addEventListener('dragover', (e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  document.querySelectorAll('.pixeltwin-selected').forEach(el => el.classList.remove('pixeltwin-selected'));
-                  if (e.target !== document.body) e.target.classList.add('pixeltwin-selected');
-                });
-
-                document.body.addEventListener('drop', (e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  const html = e.dataTransfer.getData('text/html');
-                  if (html) {
-                    const el = document.createElement('div');
-                    el.innerHTML = html;
-                    const newElement = el.firstElementChild;
-                    
-                    if (e.target === document.body) {
-                        e.target.appendChild(newElement);
-                    } else {
-                        // Check if we dropped on the top/left or bottom/right half of the target
-                        const rect = e.target.getBoundingClientRect();
-                        const isTopHalf = (e.clientY - rect.top) < (rect.height / 2);
-                        
-                        if (isTopHalf) {
-                            e.target.parentNode.insertBefore(newElement, e.target);
-                        } else {
-                            e.target.parentNode.insertBefore(newElement, e.target.nextSibling);
-                        }
-                    }
-                    
-                    window.parent.postMessage({ type: 'CONTENT_UPDATE', html: document.body.innerHTML }, '*');
-                  }
-                });
-
-                // Keyboard shortcuts (Delete & Escape)
-                window.addEventListener('keydown', (e) => {
-                  if (document.activeElement && document.activeElement.isContentEditable) {
-                      if (e.key === 'Escape') {
-                         document.activeElement.blur();
-                      }
-                      return; // Don't trigger outer shortcuts while typing
-                  }
-
-                  if (e.key === 'Delete' || e.key === 'Backspace') {
-                     const selected = document.querySelector('.pixeltwin-selected');
-                     if (selected && selected !== document.body) {
-                        e.preventDefault();
-                        selected.remove();
-                        window.parent.postMessage({ type: 'CONTENT_UPDATE', html: document.body.innerHTML }, '*');
-                     }
-                  }
-                });
-
-                // Listen for updates from parent
-                window.addEventListener('message', (event) => {
-                  if (event.data.type === 'UPDATE_SELECTED_IMAGE') {
-                    const selected = document.querySelector('.pixeltwin-selected');
-                    if (selected && selected.tagName === 'IMG') {
-                      selected.src = event.data.src;
-                      // Trigger content update
-                      window.parent.postMessage({ type: 'CONTENT_UPDATE', html: document.body.innerHTML }, '*');
-                    }
-                  } else if (event.data.type === 'UPDATE_HTML') {
-                    document.body.innerHTML = event.data.html;
-                  } else if (event.data.type === 'REPLACE_ELEMENT') {
-                    const el = document.querySelector('[data-pt-id="' + event.data.ptId + '"]');
-                    if (el && event.data.html) {
-                       el.outerHTML = event.data.html;
-                       // Ensure the new body state is sent to React
-                       window.parent.postMessage({ type: 'CONTENT_UPDATE', html: document.body.innerHTML }, '*');
-                    }
-                  } else if (event.data.type === 'APPLY_STYLE') {
-                    const el = document.querySelector('[data-pt-id="' + event.data.ptId + '"]');
-                    if (el) {
-                       el.style.setProperty(event.data.styleProp, event.data.styleValue, 'important');
-                       window.parent.postMessage({ type: 'CONTENT_UPDATE', html: document.body.innerHTML }, '*');
-                    }
-                  } else if (event.data.type === 'ADD_ELEMENT') {
-                    const selected = document.querySelector('.pixeltwin-selected') || document.body;
-                    const el = document.createElement('div');
-                    el.innerHTML = event.data.html;
-                    selected.appendChild(el.firstElementChild);
-                    window.parent.postMessage({ type: 'CONTENT_UPDATE', html: document.body.innerHTML }, '*');
-                  }
-                });
-              </script>
-            </body>
-          </html>
-        `)
-        doc.close()
-        setIsIframeLoaded(true)
+        doc.open();
+        doc.write(finalHtml);
+        doc.close();
+        setIsIframeLoaded(true);
       }
     }
   }, [project, isIframeLoaded])
@@ -851,6 +790,20 @@ export default function EditorPage() {
                 </span>
               </div>
             </div>
+
+            {/* JS-Heavy Site Warning Banner */}
+            {isJsHeavy && (
+              <div className="mb-3 flex items-start gap-3 px-4 py-3 rounded-xl text-xs font-medium"
+                style={{ background: '#FEF3C7', border: '1px solid #F59E0B', color: '#92400E' }}>
+                <span className="text-base leading-none shrink-0">⚠️</span>
+                <div>
+                  <p className="font-semibold mb-0.5">JS-Heavy Site Detected (GSAP / Framer Motion / Next.js)</p>
+                  <p className="opacity-80">This site runs mostly in JavaScript. The clone shows a static snapshot — animations and dynamic content won't work. A visibility override was auto-applied to reveal hidden elements. For best results, use <strong>Paste HTML</strong> after opening DevTools → Copy outerHTML.</p>
+                </div>
+                <button onClick={() => setIsJsHeavy(false)} className="ml-auto shrink-0 text-amber-600 hover:text-amber-900 font-bold">✕</button>
+              </div>
+            )}
+
             <div className="rounded-xl overflow-hidden" style={{ boxShadow: 'var(--shadow-xl)', border: '1px solid var(--border)' }}>
               <iframe
                 ref={iframeRef}

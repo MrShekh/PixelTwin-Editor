@@ -97,6 +97,11 @@ export async function POST(request: Request) {
 
         console.log(`[Clone] Received ${html.length} bytes of HTML`);
 
+        // Detect JS-heavy sites (GSAP / Framer / Next.js / Nuxt)
+        const bodyText = html.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+        const isJsHeavy = bodyText.length < 500 || html.includes('__next') || html.includes('nuxt') || html.includes('data-reactroot');
+        console.log(`[Clone] JS-heavy site detected: ${isJsHeavy}`);
+
         const $ = cheerio.load(html);
 
         // Helper to resolve relative URLs
@@ -108,28 +113,44 @@ export async function POST(request: Request) {
             }
         };
 
-        // Process Images
+        // Process Images — also handle lazy-loaded data-src / data-srcset
         const images: { original: string; resolved: string; alt: string }[] = [];
         $('img').each((_, element) => {
-            const src = $(element).attr('src');
-            if (src) {
+            // Resolve real src (may be in data-src for lazy-loaded images)
+            const src = $(element).attr('src') || $(element).attr('data-src') || $(element).attr('data-lazy-src') || $(element).attr('data-original');
+            if (src && !src.startsWith('data:')) {
                 const resolved = resolveUrl(src);
                 $(element).attr('src', resolved);
+                // Remove lazy-load attributes so browser loads the image
+                $(element).removeAttr('data-src');
+                $(element).removeAttr('data-lazy-src');
+                $(element).removeAttr('data-original');
                 images.push({
                     original: src,
                     resolved: resolved,
                     alt: $(element).attr('alt') || '',
                 });
             }
-            // Keep srcset but resolve URLs
-            const srcset = $(element).attr('srcset');
+            // Resolve srcset (real or lazy)
+            const srcset = $(element).attr('srcset') || $(element).attr('data-srcset');
             if (srcset) {
-                const resolvedSrcset = srcset.split(',').map(src => {
-                    const parts = src.trim().split(' ');
+                const resolvedSrcset = srcset.split(',').map(s => {
+                    const parts = s.trim().split(' ');
                     parts[0] = resolveUrl(parts[0]);
                     return parts.join(' ');
                 }).join(', ');
                 $(element).attr('srcset', resolvedSrcset);
+                $(element).removeAttr('data-srcset');
+            }
+        });
+
+        // Also resolve background-image on elements with data-bg
+        $('[data-bg]').each((_, element) => {
+            const bg = $(element).attr('data-bg');
+            if (bg) {
+                const currentStyle = $(element).attr('style') || '';
+                $(element).attr('style', `${currentStyle}; background-image: url('${resolveUrl(bg)}');`);
+                $(element).removeAttr('data-bg');
             }
         });
 
@@ -161,7 +182,7 @@ export async function POST(request: Request) {
 
         // Fetch and inline critical CSS to preserve gradients and styles
         const inlinedStyles: string[] = [];
-        const maxStylesheets = 5;
+        const maxStylesheets = 8; // increased from 5
 
         for (let i = 0; i < Math.min(styles.length, maxStylesheets); i++) {
             const styleUrl = styles[i];
@@ -179,8 +200,9 @@ export async function POST(request: Request) {
                 if (cssResponse.ok) {
                     let cssText = await cssResponse.text();
 
-                    // Resolve relative URLs in CSS
+                    // Resolve relative URLs in CSS (background-image, font-face, etc.)
                     cssText = cssText.replace(/url\(['"]?([^'")]+)['"]?\)/g, (match, p1) => {
+                        if (p1.startsWith('data:') || p1.startsWith('http')) return match;
                         const cssBaseUrl = styleUrl.substring(0, styleUrl.lastIndexOf('/') + 1);
                         try {
                             return `url('${new URL(p1, cssBaseUrl).href}')`;
@@ -188,6 +210,14 @@ export async function POST(request: Request) {
                             return match;
                         }
                     });
+
+                    // Extract :root CSS variable declarations and put them FIRST
+                    const rootMatch = cssText.match(/:root\s*\{([^}]+)\}/g);
+                    if (rootMatch) {
+                        // Ensure :root blocks are at the front so vars resolve correctly
+                        const rootBlocks = rootMatch.join('\n');
+                        cssText = rootBlocks + '\n' + cssText;
+                    }
 
                     inlinedStyles.push(`/* Inlined from: ${styleUrl} */\n${cssText}`);
                     console.log(`[Clone] Successfully inlined CSS (${cssText.length} bytes)`);
@@ -201,9 +231,24 @@ export async function POST(request: Request) {
         }
 
         // Add inlined styles to the head
+        // :root block first so CSS variables resolve everywhere
         if (inlinedStyles.length > 0) {
-            $('head').append(`<style id="pixeltwin-inlined-styles">\n${inlinedStyles.join('\n\n')}\n</style>`);
-            console.log(`[Clone] Inlined ${inlinedStyles.length} stylesheets`);
+            // Extract ALL :root blocks from all stylesheets and place a single combined one at the very top
+            const allRootVars: string[] = [];
+            const allRootRegex = /:root\s*\{([^}]+)\}/g;
+            let rootMatch;
+            const combinedCss = inlinedStyles.join('\n\n');
+            while ((rootMatch = allRootRegex.exec(combinedCss)) !== null) {
+                allRootVars.push(rootMatch[1].trim());
+            }
+
+            let headStyle = '';
+            if (allRootVars.length > 0) {
+                headStyle = `<style id="pixeltwin-root-vars">\n:root {\n  ${allRootVars.join('\n  ')}\n}\n</style>\n`;
+            }
+            headStyle += `<style id="pixeltwin-inlined-styles">\n${inlinedStyles.join('\n\n')}\n</style>`;
+            $('head').prepend(headStyle);
+            console.log(`[Clone] Inlined ${inlinedStyles.length} stylesheets, extracted ${allRootVars.length} :root var blocks`);
         }
 
         // Process Inline Styles (preserve all inline styles including gradients)
@@ -234,6 +279,25 @@ export async function POST(request: Request) {
 
         console.log(`[Clone] Successfully cloned ${url}`);
 
+        // Inject GSAP / Framer Motion visibility fix at the very end of <head>
+        // This forces all opacity:0 / visibility:hidden elements (set as animation start states) to be visible
+        $('head').append(`<style id="pixeltwin-gsap-fix">
+  /* PixelTwin: Force GSAP/Framer initial states to be visible */
+  *, *::before, *::after {
+    opacity: 1 !important;
+    visibility: visible !important;
+    transform: none !important;
+    animation: none !important;
+    transition: none !important;
+    filter: none !important;        /* clear blur/grayscale on elements AND pseudo-elements */
+    clip-path: none !important;     /* clear clip-path reveal animations */
+    will-change: auto !important;
+  }
+  /* Restore intentional hidden elements */
+  [hidden], [aria-hidden="true"], .sr-only { opacity: 0 !important; }
+  /* backdrop-filter intentionally NOT reset — preserves frosted-glass navbars */
+</style>`);
+
         return NextResponse.json({
             html: $.html(),
             assets: {
@@ -241,6 +305,7 @@ export async function POST(request: Request) {
                 styles
             },
             originalUrl: url,
+            isJsHeavy,
             stats: {
                 images: images.length,
                 stylesheets: styles.length,
